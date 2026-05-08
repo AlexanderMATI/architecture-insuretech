@@ -1,0 +1,59 @@
+@startuml
+!include <C4/C4_Container>
+
+title Container diagram for InsureTech (AS-IS)
+
+top to bottom direction
+
+Person(client, "Клиент", "Физическое лицо")
+System_Ext(partner_systems, "Системы партнёров", "B2B-интеграция")
+System_Ext(insurance_systems, "Страховые компании", "Внешние API")
+System_Ext(payment_service, "Платёжный сервис", "Приём платежей")
+
+System_Boundary(insuretech, "InsureTech") {
+
+  Container(web_app, "InsureTech Web", "React", "Личный кабинет")
+
+  Container(core_app, "core-app", "Kotlin, Spring Boot", "Монолит: поиск, оформление, отображение страховок")
+
+  Container(product_agg, "ins-product-aggregator", "Kotlin, Spring Boot", "Агрегация тарифов от страховых")
+
+  Container(settlement_svc, "ins-comp-settlement", "Kotlin, Spring Boot", "Взаиморасчёты со страховыми")
+
+  Container(client_info, "client-info", "Kotlin, Spring Boot", "Управление клиентскими данными")
+
+  ContainerDb(core_db, "core-db", "PostgreSQL", "Тарифы, заявки, полисы")
+  ContainerDb(settlement_db, "ins-comp-settlement-db", "PostgreSQL", "Оформленные страховки, условия расчётов")
+  ContainerDb(client_db, "client-db", "PostgreSQL", "ФИО, телефон, паспортные данные")
+}
+
+' Клиент
+Rel(client, web_app, "HTTPS")
+
+' Фронт -> бэк
+Rel(web_app, core_app, "оформление, тарифы, статусы", "REST")
+Rel(web_app, client_info, "профиль клиента", "REST")
+Rel(web_app, payment_service, "оплата (redirect)", "HTTP")
+
+' Внутренние связи core-app
+Rel(core_app, core_db, "CRUD", "TCP")
+Rel(core_app, product_agg, "получение тарифов, создание заявок", "REST")
+Rel(core_app, settlement_svc, "передача оформленных страховок", "REST")
+Rel(core_app, client_info, "CRUD клиентов", "REST")
+Rel(core_app, payment_service, "инициация платежа", "HTTP")
+
+' Агрегатор
+Rel(product_agg, insurance_systems, "запрос тарифов от 5+ компаний", "REST/SOAP/GraphQL")
+
+' Сервис расчётов
+Rel(settlement_svc, settlement_db, "CRUD", "TCP")
+Rel(settlement_svc, insurance_systems, "обмен для взаиморасчётов", "REST/SOAP/GraphQL")
+Rel(settlement_svc, product_agg, "получение тарифов", "REST")
+
+' Client info
+Rel(client_info, client_db, "CRUD", "TCP")
+
+' Партнёры
+Rel(partner_systems, core_app, "поиск и оформление страховок", "REST")
+
+@enduml

@@ -1,0 +1,66 @@
+!include <C4/C4_Container>
+top to bottom direction
+
+Person(client, "Клиент", "Физическое лицо")
+System_Ext(partner_systems, "B2B-партнёры", "Партнёрские системы")
+System_Ext(insurance_systems, "Страховые компании", "Внешние API страховых")
+System_Ext(payment_service, "Платёжный сервис", "Внешний платёжный шлюз")
+
+System_Boundary(insuretech, "InsureTech") {
+
+    Container(web_app, "Web-приложение", "SPA", "Личный кабинет клиента")
+
+    Container(core_app, "core-app", "Java / Spring Boot", "Бэкенд: оформление страховок, B2B API")
+
+    Container(client_info, "client-info", "Microservice", "Управление клиентскими профилями")
+
+    Container(product_agg, "ins-product-aggregator", "Microservice", "Агрегация тарифов от страховых")
+
+    Container(settlement_svc, "ins-comp-settlement", "Microservice", "Взаиморасчёты, реестры")
+
+    ContainerDb(client_db, "Client DB", "PostgreSQL", "Данные клиентов")
+    ContainerDb(core_db, "Core DB", "PostgreSQL", "Заявки, полисы, реплика продуктов")
+    ContainerDb(settlement_db, "Settlement DB", "PostgreSQL", "Витрина для расчётов")
+    ContainerDb(product_cache_db, "Product Cache DB", "PostgreSQL", "Кэш тарифов")
+
+    Container(event_bus, "Event Streaming Platform", "Kafka", "Шина событий")
+}
+
+' Основные связи
+Rel(client, web_app, "HTTPS")
+Rel(web_app, core_app, "REST")
+Rel(partner_systems, core_app, "REST / JSON")
+
+Rel(core_app, client_info, "REST")
+Rel(client_info, client_db, "SQL")
+Rel(core_app, core_db, "SQL")
+Rel(settlement_svc, settlement_db, "SQL")
+Rel(product_agg, product_cache_db, "SQL")
+
+Rel(core_app, payment_service, "REST")
+Rel(core_app, product_agg, "REST (начальная загрузка / fallback)")
+Rel(settlement_svc, product_agg, "REST (fallback)")
+Rel(product_agg, insurance_systems, "REST / SOAP")
+
+' Event Streaming
+Rel(product_agg, event_bus, "публикует Product*/Tariff*")
+Rel(event_bus, core_app, "подписка Product*/Tariff*")
+Rel(event_bus, settlement_svc, "подписка Product*/Tariff*")
+
+Rel(core_app, event_bus, "публикует Policy*")
+Rel(event_bus, settlement_svc, "подписка Policy*")
+
+' Transactional Outbox notes
+Note right of core_app
+  <b>Transactional Outbox</b>
+  Одна транзакция: полис + outbox-запись
+  → worker публикует события Policy*
+end note
+
+Note right of product_agg
+  <b>Transactional Outbox</b>
+  Одна транзакция: кэш + outbox-запись
+  → worker публикует события Product*/Tariff*
+end note
+
+@enduml
