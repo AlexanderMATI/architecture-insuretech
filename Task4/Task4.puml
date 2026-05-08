@@ -1,0 +1,85 @@
+@startuml
+!include <C4/C4_Container>
+
+title Container diagram for InsureTech (с ОСАГО, Event-Driven)
+
+top to bottom direction
+
+Person(client, "Клиент", "Физическое лицо")
+System_Ext(partner_systems, "B2B-партнёры", "Партнёрские системы")
+System_Ext(insurance_systems, "Страховые компании", "REST API (ОСАГО, тарифы)")
+System_Ext(payment_service, "Платёжный сервис", "Приём платежей")
+
+System_Boundary(insuretech, "InsureTech") {
+
+    Container(web_app, "Web-приложение", "SPA", "Личный кабинет")
+    Container(core_app, "core-app", "Java / Spring Boot", "Бизнес-логика, оформление")
+    Container(client_info, "client-info", "Microservice", "Профили клиентов")
+    Container(product_agg, "ins-product-aggregator", "Microservice", "Агрегация тарифов")
+    Container(settlement_svc, "ins-comp-settlement", "Microservice", "Взаиморасчёты")
+    Container(osago_agg, "osago-aggregator", "Microservice", "Оркестрация запросов ОСАГО")
+
+    ContainerDb(osago_db, "OSAGO DB", "PostgreSQL", "Заявки, статусы, предложения")
+    ContainerDb(client_db, "Client DB", "PostgreSQL", "Клиентские данные")
+    ContainerDb(core_db, "Core DB", "PostgreSQL", "Заявки, полисы, реплика")
+    ContainerDb(settlement_db, "Settlement DB", "PostgreSQL", "Витрина для расчётов")
+    ContainerDb(product_cache_db, "Product Cache DB", "PostgreSQL", "Кэш тарифов")
+
+    Container(event_bus, "Event Streaming", "Kafka / YMQ", "Шина событий")
+}
+
+' --- Клиент и фронт ---
+Rel(client, web_app, "HTTPS")
+Rel(web_app, core_app, "тарифы, оформление", "REST/JSON")
+Rel(web_app, core_app, "стриминг предложений", "WebSocket/SSE")
+
+' --- Партнёры ---
+Rel(partner_systems, core_app, "B2B API", "REST/JSON")
+
+' --- Внутренние сервисы ---
+Rel(core_app, client_info, "CRUD", "REST")
+Rel(core_app, payment_service, "платежи", "REST")
+Rel(core_app, core_db, "SQL")
+Rel(client_info, client_db, "SQL")
+Rel(settlement_svc, settlement_db, "SQL")
+
+' --- Агрегаторы и страховые ---
+Rel(core_app, product_agg, "загрузка каталога", "REST")
+Rel(core_app, osago_agg, "создание заявки ОСАГО (асинхронно)", "Async Kafka")
+Rel(osago_agg, osago_db, "SQL")
+Rel(osago_agg, insurance_systems, "создание/опрос (Timeout, Retry, CB, RateLimit)", "REST")
+Rel(product_agg, insurance_systems, "запрос тарифов", "REST/SOAP")
+Rel(product_agg, product_cache_db, "SQL")
+
+' --- Event Streaming ---
+Rel(product_agg, event_bus, "публикует Product*/Tariff*")
+Rel(event_bus, core_app, "подписка")
+Rel(event_bus, settlement_svc, "подписка")
+
+Rel(core_app, event_bus, "публикует Policy*, OsagoQuoteRequested")
+Rel(event_bus, osago_agg, "OsagoQuoteRequested")
+Rel(osago_agg, event_bus, "публикует OsagoOfferUpdated")
+Rel(event_bus, core_app, "OsagoOfferUpdated")
+Rel(event_bus, settlement_svc, "Policy*")
+
+' --- Transactional Outbox ---
+Note right of core_app
+  <b>Transactional Outbox</b>
+  Полис + outbox-запись → событие Policy*
+end note
+
+Note right of product_agg
+  <b>Transactional Outbox</b>
+  Кэш + outbox-запись → Product*/Tariff*
+end note
+
+Note right of osago_agg
+  <b>osago-aggregator особенности:</b>
+  • Своё хранилище (статусы, предложения)
+  • Async API через Kafka (core-app не ждёт)
+  • Максимум 60 секунд на заявку
+  • Паттерны: Timeout, Retry, Circuit Breaker, Rate Limiting
+  • Поддержка горизонтального масштабирования
+end note
+
+@enduml
